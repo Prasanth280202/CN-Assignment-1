@@ -3,32 +3,31 @@ import os
 import sys
 import re
 
-CACHE_DIR = "cache"
 BUFFER_SIZE = 4096
-PROXY_HOST = "0.0.0.0"
-PROXY_PORT = 8888
-
+CACHE_DIR = "cache"
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
 
-def handle_client(client_socket):
-    message_bytes = client_socket.recv(BUFFER_SIZE)
+def handle_client(clientSocket):
+    # Get HTTP request from client
+    message_bytes = clientSocket.recv(BUFFER_SIZE)
     message = message_bytes.decode('utf-8')
     print('Received request:\n< ' + message)
     
+    # Extract the method, URI and version of the HTTP client request
     requestParts = message.split()
     if len(requestParts) < 3:
-        client_socket.close()
+        clientSocket.close()
         return
     
-    method = requestParts[0]
-    URI = requestParts[1]
-    version = requestParts[2]
+    method, URI, version = requestParts[:3]
     print(f'Method:\t\t{method}\nURI:\t\t{URI}\nVersion:\t{version}\n')
     
+    # Get the requested resource from URI
     URI = re.sub('^(/?)http(s?)://', '', URI, count=1)
     URI = URI.replace('/..', '')
     
+    # Split hostname from resource name
     resourceParts = URI.split('/', 1)
     hostname = resourceParts[0]
     resource = '/' + resourceParts[1] if len(resourceParts) == 2 else '/'
@@ -43,29 +42,39 @@ def handle_client(client_socket):
         if os.path.isfile(cacheLocation):
             with open(cacheLocation, "rb") as cacheFile:
                 cacheData = cacheFile.read()
-            client_socket.sendall(cacheData)
+            clientSocket.sendall(cacheData)
             print(f'Cache hit! Loading from cache file: {cacheLocation}')
         else:
+            # Create a socket to connect to origin server
             originServerSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             address = socket.gethostbyname(hostname)
             originServerSocket.connect((address, 80))
             print(f'Connected to origin server: {hostname}')
             
+            # Create request for origin server
             request = f'GET {resource} HTTP/1.1\r\nHost: {hostname}\r\nConnection: close\r\n\r\n'
             print('Forwarding request to origin server:')
             print('> ' + request.replace('\r\n', '\n> '))
             
-            originServerSocket.sendall(request.encode())
-            response = b''
+            try:
+                originServerSocket.sendall(request.encode())
+            except socket.error:
+                print('Forward request to origin failed')
+                sys.exit()
+            print('Request sent to origin server\n')
             
+            # Get the response from the origin server
+            response = b''
             while True:
                 data = originServerSocket.recv(BUFFER_SIZE)
                 if not data:
                     break
                 response += data
             
-            client_socket.sendall(response)
+            # Send the response to the client
+            clientSocket.sendall(response)
             
+            # Save origin server response in the cache file
             cacheDir = os.path.dirname(cacheLocation)
             if not os.path.exists(cacheDir):
                 os.makedirs(cacheDir)
@@ -75,19 +84,19 @@ def handle_client(client_socket):
             
             print('Response cached successfully.')
             originServerSocket.close()
-            client_socket.shutdown(socket.SHUT_WR)
+            clientSocket.shutdown(socket.SHUT_WR)
             print('Sockets closed successfully.')
     except Exception as e:
         print(f'Error: {e}')
-        client_socket.sendall(b'HTTP/1.1 500 Internal Server Error\r\n\r\n')
+        clientSocket.sendall(b'HTTP/1.1 500 Internal Server Error\r\n\r\n')
     finally:
-        client_socket.close()
+        clientSocket.close()
 
 def start_proxy():
     proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    proxy_socket.bind((PROXY_HOST, PROXY_PORT))
+    proxy_socket.bind(("0.0.0.0", 8888))
     proxy_socket.listen(10)
-    print(f'Proxy server running on {PROXY_HOST}:{PROXY_PORT}')
+    print('Proxy server running on 0.0.0.0:8888')
     
     while True:
         client_socket, addr = proxy_socket.accept()
