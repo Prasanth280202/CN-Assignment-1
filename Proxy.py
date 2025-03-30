@@ -93,5 +93,5 @@ def start_proxy():
         client_socket, addr = proxy_socket.accept()
         handle_client(client_socket)
 
-if _name_ == "_main_":
+if __name__ == "_main_":
     start_proxy()
