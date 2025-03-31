@@ -4,7 +4,6 @@ import os
 import argparse
 import re
 
-# 1MB buffer size
 BUFFER_SIZE = 1000000
 
 parser = argparse.ArgumentParser()
@@ -31,15 +30,7 @@ except socket.error as e:
 serverSocket.listen(5)
 print('Listening to socket')
 
-while True:
-    print('Waiting for connection...')
-    try:
-        clientSocket, clientAddress = serverSocket.accept()
-        print('Received a connection')
-    except socket.error as e:
-        print(f'Failed to accept connection: {e}')
-        sys.exit()
-
+def handle_client(clientSocket):
     try:
         message_bytes = clientSocket.recv(BUFFER_SIZE)
         message = message_bytes.decode('utf-8')
@@ -47,13 +38,13 @@ while True:
     except socket.error as e:
         print(f'Error receiving data: {e}')
         clientSocket.close()
-        continue
+        return
 
     requestParts = message.split() 
     if len(requestParts) < 3:
         print('Invalid request received')
         clientSocket.close()
-        continue
+        return
     
     method, URI, version = requestParts[:3]
     print(f'Method: {method}\nURI: {URI}\nVersion: {version}\n')
@@ -80,7 +71,7 @@ while True:
                 clientSocket.sendall(cacheData)
                 print(f'Cache hit! Sent {cacheLocation} to client.')
                 clientSocket.close()
-                continue
+                return
         except Exception as e:
             print(f'Error reading cache: {e}')
     
@@ -92,7 +83,7 @@ while True:
     except socket.error as e:
         print(f'Connection to origin server failed: {e}')
         clientSocket.close()
-        continue
+        return
     
     request = f'{method} {resource} HTTP/1.0\r\nHost: {hostname}\r\nConnection: close\r\n\r\n'
     try:
@@ -101,7 +92,7 @@ while True:
     except socket.error as e:
         print(f'Error sending request: {e}')
         clientSocket.close()
-        continue
+        return
     
     try:
         response = b''
@@ -125,3 +116,12 @@ while True:
     clientSocket.close()
     print('Connections closed')
 
+while True:
+    print('Waiting for connection...')
+    try:
+        clientSocket, clientAddress = serverSocket.accept()
+        print('Received a connection')
+        handle_client(clientSocket)
+    except socket.error as e:
+        print(f'Failed to accept connection: {e}')
+        sys.exit()
