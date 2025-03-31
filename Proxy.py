@@ -4,7 +4,7 @@ import os
 import argparse
 import re
 
-BUFFER_SIZE = 1000000
+size = 1000000
 
 parser = argparse.ArgumentParser()
 parser.add_argument('hostname', help='the IP Address Of Proxy Server')
@@ -32,7 +32,7 @@ print('Listening to socket')
 
 def handle_client(clientSocket):
     try:
-        message_bytes = clientSocket.recv(BUFFER_SIZE)
+        message_bytes = clientSocket.recv(size)
         message = message_bytes.decode('utf-8')
         print(f'Received request:\n< {message}')
     except socket.error as e:
@@ -97,7 +97,7 @@ def handle_client(clientSocket):
     try:
         response = b''
         while True:
-            data = originServerSocket.recv(BUFFER_SIZE)
+            data = originServerSocket.recv(size)
             if not data:
                 break
             response += data
