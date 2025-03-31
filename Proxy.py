@@ -2,97 +2,90 @@ import socket
 import os
 import sys
 import re
+import argparse
 
 BUFFER_SIZE = 4096
 CACHE_DIR = "cache"
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
 
-def handle_client(clientSocket):
-    # Get HTTP request from client
-    message_bytes = clientSocket.recv(BUFFER_SIZE)
+def handle_client(client_socket, proxy_host=None, proxy_port=None):
+    message_bytes = client_socket.recv(BUFFER_SIZE)
     message = message_bytes.decode('utf-8')
     print('Received request:\n< ' + message)
     
-    # Extract the method, URI and version of the HTTP client request
-    requestParts = message.split()
-    if len(requestParts) < 3:
-        clientSocket.close()
+    request_parts = message.split()
+    if len(request_parts) < 3:
+        client_socket.close()
         return
     
-    method, URI, version = requestParts[:3]
+    method, URI, version = request_parts[:3]
     print(f'Method:\t\t{method}\nURI:\t\t{URI}\nVersion:\t{version}\n')
     
-    # Get the requested resource from URI
     URI = re.sub('^(/?)http(s?)://', '', URI, count=1)
     URI = URI.replace('/..', '')
     
-    # Split hostname from resource name
-    resourceParts = URI.split('/', 1)
-    hostname = resourceParts[0]
-    resource = '/' + resourceParts[1] if len(resourceParts) == 2 else '/'
+    resource_parts = URI.split('/', 1)
+    hostname = resource_parts[0]
+    resource = '/' + resource_parts[1] if len(resource_parts) == 2 else '/'
     print(f'Requested Resource:\t{resource}')
     
-    cacheLocation = os.path.join(CACHE_DIR, hostname + resource.replace('/', '_'))
-    if cacheLocation.endswith('/'):
-        cacheLocation += 'default'
-    print(f'Cache location:\t\t{cacheLocation}')
+    cache_location = os.path.join(CACHE_DIR, hostname + resource.replace('/', '_'))
+    if cache_location.endswith('/'):
+        cache_location += 'default'
+    print(f'Cache location:\t\t{cache_location}')
     
     try:
-        if os.path.isfile(cacheLocation):
-            with open(cacheLocation, "rb") as cacheFile:
-                cacheData = cacheFile.read()
-            clientSocket.sendall(cacheData)
-            print(f'Cache hit! Loading from cache file: {cacheLocation}')
+        if os.path.isfile(cache_location):
+            with open(cache_location, "rb") as cache_file:
+                cache_data = cache_file.read()
+            client_socket.sendall(cache_data)
+            print(f'Cache hit! Loading from cache file: {cache_location}')
         else:
-            # Create a socket to connect to origin server
-            originServerSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            address = socket.gethostbyname(hostname)
-            originServerSocket.connect((address, 80))
-            print(f'Connected to origin server: {hostname}')
+            origin_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             
-            # Create request for origin server
-            request = f'GET {resource} HTTP/1.1\r\nHost: {hostname}\r\nConnection: close\r\n\r\n'
-            print('Forwarding request to origin server:')
+            if proxy_host and proxy_port:
+                print(f'Connecting through proxy: {proxy_host}:{proxy_port}')
+                origin_server_socket.connect((proxy_host, proxy_port))
+                request = f'{method} http://{hostname}{resource} HTTP/1.1\r\nHost: {hostname}\r\nConnection: close\r\n\r\n'
+            else:
+                address = socket.gethostbyname(hostname)
+                origin_server_socket.connect((address, 80))
+                request = f'{method} {resource} HTTP/1.1\r\nHost: {hostname}\r\nConnection: close\r\n\r\n'
+            
+            print('Forwarding request:')
             print('> ' + request.replace('\r\n', '\n> '))
             
-            try:
-                originServerSocket.sendall(request.encode())
-            except socket.error:
-                print('Forward request to origin failed')
-                sys.exit()
+            origin_server_socket.sendall(request.encode())
             print('Request sent to origin server\n')
             
-            # Get the response from the origin server
             response = b''
             while True:
-                data = originServerSocket.recv(BUFFER_SIZE)
+                data = origin_server_socket.recv(BUFFER_SIZE)
                 if not data:
                     break
                 response += data
             
-            # Send the response to the client
-            clientSocket.sendall(response)
+            client_socket.sendall(response)
             
-            # Save origin server response in the cache file
-            cacheDir = os.path.dirname(cacheLocation)
-            if not os.path.exists(cacheDir):
-                os.makedirs(cacheDir)
+            cache_dir = os.path.dirname(cache_location)
+            if not os.path.exists(cache_dir):
+                os.makedirs(cache_dir)
             
-            with open(cacheLocation, 'wb') as cacheFile:
-                cacheFile.write(response)
+            with open(cache_location, 'wb') as cache_file:
+                cache_file.write(response)
             
             print('Response cached successfully.')
-            originServerSocket.close()
-            clientSocket.shutdown(socket.SHUT_WR)
+            origin_server_socket.close()
+            client_socket.shutdown(socket.SHUT_WR)
             print('Sockets closed successfully.')
     except Exception as e:
         print(f'Error: {e}')
-        clientSocket.sendall(b'HTTP/1.1 500 Internal Server Error\r\n\r\n')
+        client_socket.sendall(b'HTTP/1.1 500 Internal Server Error\r\n\r\n')
     finally:
-        clientSocket.close()
+        client_socket.close()
 
-def start_proxy():
+def start_proxy(proxy_host=None, proxy_port=None):
     proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     proxy_socket.bind(("0.0.0.0", 8888))
     proxy_socket.listen(10)
@@ -100,7 +93,12 @@ def start_proxy():
     
     while True:
         client_socket, addr = proxy_socket.accept()
-        handle_client(client_socket)
+        handle_client(client_socket, proxy_host, proxy_port)
 
-if __name__ == "_main_":
-    start_proxy()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--proxy_host', type=str, help='Upstream proxy hostname', default=None)
+    parser.add_argument('--proxy_port', type=int, help='Upstream proxy port', default=None)
+    args = parser.parse_args()
+    
+    start_proxy(args.proxy_host, args.proxy_port)
